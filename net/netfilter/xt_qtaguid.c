@@ -786,19 +786,37 @@ static int pp_iface_stat_line(bool header, char *outp,
 			       "tx_other_bytes tx_other_packets\n"
 			);
 	} else {
+		struct rtnl_link_stats64 dev_stats, *stats;
+		__u64 rx_pkts, tx_pkts, rx_bytes, tx_bytes;
 		struct data_counters *cnts;
 		int cnt_set = 0;   /* We only use one set for the device */
 		cnts = &iface_entry->totals_via_skb;
+
+		if (iface_entry->active) {
+			stats = dev_get_stats(iface_entry->net_dev, &dev_stats);
+			rx_bytes = iface_entry->totals_via_dev[IFS_RX].bytes
+					+ stats->rx_bytes;
+			rx_pkts = iface_entry->totals_via_dev[IFS_RX].packets
+					+ stats->rx_packets;
+			tx_bytes = iface_entry->totals_via_dev[IFS_TX].bytes
+					+ stats->tx_bytes;
+			tx_pkts = iface_entry->totals_via_dev[IFS_TX].packets
+					+ stats->tx_packets;
+		} else {
+			rx_bytes = iface_entry->totals_via_dev[IFS_RX].bytes;
+			rx_pkts = iface_entry->totals_via_dev[IFS_RX].packets;
+			tx_bytes = iface_entry->totals_via_dev[IFS_TX].bytes;
+			tx_pkts = iface_entry->totals_via_dev[IFS_TX].packets;
+		}
+
 		len = snprintf(
 			outp, char_count,
 			"%s "
 			"%llu %llu %llu %llu %llu %llu %llu %llu "
 			"%llu %llu %llu %llu %llu %llu %llu %llu\n",
 			iface_entry->ifname,
-			dc_sum_bytes(cnts, cnt_set, IFS_RX),
-			dc_sum_packets(cnts, cnt_set, IFS_RX),
-			dc_sum_bytes(cnts, cnt_set, IFS_TX),
-			dc_sum_packets(cnts, cnt_set, IFS_TX),
+			rx_bytes, rx_pkts,
+			tx_bytes, tx_pkts,
 			cnts->bpc[cnt_set][IFS_RX][IFS_TCP].bytes,
 			cnts->bpc[cnt_set][IFS_RX][IFS_TCP].packets,
 			cnts->bpc[cnt_set][IFS_RX][IFS_UDP].bytes,
@@ -1752,6 +1770,8 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	struct sock *sk;
 	uid_t sock_uid;
 	bool res;
+	bool set_sk_callback_lock = false;
+
 	/*
 	 * TODO: unhack how to force just accounting.
 	 * For now we only do tag stats when the uid-owner is not requested
@@ -1809,6 +1829,8 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	MT_DEBUG("qtaguid[%d]: sk=%p got_sock=%d fam=%d proto=%d\n",
 		 par->hooknum, sk, got_sock, par->family, ipx_proto(skb, par));
 	if (sk != NULL) {
+		set_sk_callback_lock = true;
+		read_lock_bh(&sk->sk_callback_lock);
 		MT_DEBUG("qtaguid[%d]: sk=%p->sk_socket=%p->file=%p\n",
 			par->hooknum, sk, sk->sk_socket,
 			sk->sk_socket ? sk->sk_socket->file : (void *)-1LL);
@@ -1880,6 +1902,8 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 put_sock_ret_res:
 	if (got_sock)
 		xt_socket_put_sk(sk);
+	if (set_sk_callback_lock)
+		read_unlock_bh(&sk->sk_callback_lock);
 ret_res:
 	MT_DEBUG("qtaguid[%d]: left %d\n", par->hooknum, res);
 	return res;
@@ -2341,6 +2365,26 @@ static int ctrl_cmd_tag(const char *input)
 			 "st@%p ...->f_count=%ld\n",
 			 input, el_socket->sk, sock_tag_entry,
 			 atomic_long_read(&el_socket->file->f_count));
+
+		/*
+		 * The tagged socket should be the same as the one from this
+		 * sockfd_lookup(). Otherwise, some unexpected error happens,
+		 * we just put back this ref and return.
+		 */
+		if (sock_tag_entry->socket != el_socket) {
+			pr_err("qtaguid: ctrl_tag(%s): "
+			       "socket mismatch\n",
+			       input);
+			BUG_ON(tag_ref_entry->num_sock_tags <= 0);
+			tag_ref_entry->num_sock_tags--;
+			free_tag_ref_from_utd_entry(tag_ref_entry,
+						    uid_tag_data_entry);
+			spin_unlock_bh(&uid_tag_data_tree_lock);
+			spin_unlock_bh(&sock_tag_list_lock);
+			res = -EINVAL;
+			goto err_put;
+		}
+
 		/*
 		 * This is a re-tagging, so release the sock_fd that was
 		 * locked at the time of the 1st tagging.

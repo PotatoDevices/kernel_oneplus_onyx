@@ -1,36 +1,12 @@
-menu "Android"
+menu "Android staging"
 
-config ANDROID
-	bool "Android Drivers"
+config ANDROID_STAGING
+	bool "Android Staging Drivers"
 	default N
 	---help---
 	  Enable support for various drivers needed on the Android platform
 
-if ANDROID
-
-config ANDROID_BINDER_IPC
-	bool "Android Binder IPC Driver"
-	default n
-
-config ANDROID_BINDER_IPC_32BIT
-	bool "Use old (Android 4.4 and earlier) 32-bit binder API"
-	depends on !64BIT && ANDROID_BINDER_IPC
-	default y
-	---help---
-	  Enable to support an old 32-bit Android user-space. Breaks the new
-	  Android user-space.
-
-config ANDROID_BINDER_DEVICES
-	string "Android Binder devices"
-	depends on ANDROID_BINDER_IPC
-	default "binder,hwbinder,vndbinder"
-	---help---
-	  Default value for the binder.devices parameter.
-
-	  The binder.devices parameter is a comma-separated list of strings
-	  that specifies the names of the binder device nodes that will be
-	  created. Each binder device has its own context manager, and is
-	  therefore logically separated from the other devices.
+if ANDROID_STAGING
 
 config ASHMEM
 	bool "Enable the Anonymous Shared Memory Subsystem"
@@ -106,23 +82,6 @@ config ANDROID_INTF_ALARM_DEV
 	  elapsed realtime, and a non-wakeup alarm on the monotonic clock.
 	  Also exports the alarm interface to user-space.
 
-config ANDROID_LMK_ADJ_RBTREE
-	bool "Use RBTREE for Android Low Memory Killer"
-	depends on ANDROID_LOW_MEMORY_KILLER
-	default N
-	---help---
-	  Use oom_score_adj rbtree to select the best proecss to kill
-	  when system in low memory status.
-
-config ANDROID_BG_SCAN_MEM
-	bool "SCAN free memory more frequently"
-	depends on ANDROID_LOW_MEMORY_KILLER && ANDROID_LMK_ADJ_RBTREE && CGROUP_SCHED
-	default N
-	---help---
-	  Add more free-memory check point. Such as, when a task is moved to
-	  background task groups, we can trigger low memory killer to scan
-	  memory and decide whether it needs to reclaim memory by killing tasks.
-
-endif # if ANDROID
+endif # if ANDROID_STAGING
 
 endmenu
